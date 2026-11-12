@@ -103,9 +103,8 @@ export default function Admin() {
   const [resources, setResources] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
   const [mockTests, setMockTests] = useState<any[]>([]);
-
   const [pdf, setPdf] = useState<File | null>(null);
-  const [selectedQuestions, setSelectedQuestions] = useState<string[]>([]);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
 
   async function load() {
     if (!supabase) return;
@@ -113,22 +112,19 @@ export default function Admin() {
     const [a, b, c, d] = await Promise.all([
       supabase.from("questions").select("*")
         .order("created_at", { ascending: false }).limit(500),
-
       supabase.from("resources").select("*")
         .order("created_at", { ascending: false }).limit(100),
-
       supabase.from("notifications").select("*")
         .order("created_at", { ascending: false }).limit(100),
-
       supabase.from("mock_tests").select("*")
         .order("created_at", { ascending: false }).limit(100),
     ]);
 
     if (a.error || b.error || c.error || d.error) {
       setMsg(
-        "Loading error: " +
+        "Load error: " +
         (a.error?.message || b.error?.message ||
-          c.error?.message || d.error?.message)
+         c.error?.message || d.error?.message)
       );
       return;
     }
@@ -141,7 +137,7 @@ export default function Admin() {
 
   async function login() {
     if (!supabase) {
-      setMsg("Configure Supabase in .env.local.");
+      setMsg("Supabase is not configured.");
       return;
     }
 
@@ -165,13 +161,13 @@ export default function Admin() {
       return;
     }
 
-    const { data: profile, error: pe } =
+    const { data: profile, error: profileError } =
       await supabase.from("profiles")
         .select("role")
         .eq("id", data.user.id)
         .maybeSingle();
 
-    if (pe || profile?.role !== "admin") {
+    if (profileError || profile?.role !== "admin") {
       await supabase.auth.signOut();
       setMsg("Access denied: administrator only.");
       setBusy(false);
@@ -180,8 +176,8 @@ export default function Admin() {
 
     setSession(true);
     setMsg("Administrator verified.");
-    setBusy(false);
     await load();
+    setBusy(false);
   }
 
   async function saveQuestion() {
@@ -202,9 +198,10 @@ export default function Admin() {
       ? await supabase.from("questions").update(q).eq("id", q.id)
       : await supabase.from("questions").insert(q);
 
-    setMsg(res.error ? res.error.message : "Question saved.");
-
-    if (!res.error) {
+    if (res.error) {
+      setMsg("Question save failed: " + res.error.message);
+    } else {
+      setMsg("Question saved.");
       setQ(emptyQ);
       await load();
     }
@@ -262,7 +259,7 @@ export default function Admin() {
     }));
 
     setPdf(null);
-    setMsg("PDF uploaded successfully. Now save the resource.");
+    setMsg("PDF uploaded. Now save the resource.");
     setBusy(false);
   }
 
@@ -289,15 +286,14 @@ export default function Admin() {
       : await supabase.from("resources").insert(payload);
 
     if (res.error) {
-      setMsg("Save failed: " + res.error.message);
-      setBusy(false);
-      return;
+      setMsg("Resource save failed: " + res.error.message);
+    } else {
+      setMsg("Resource saved.");
+      setR(emptyR);
+      setPdf(null);
+      await load();
     }
 
-    setMsg("Resource saved successfully.");
-    setR(emptyR);
-    setPdf(null);
-    await load();
     setBusy(false);
   }
 
@@ -313,9 +309,10 @@ export default function Admin() {
       ? await supabase.from("notifications").update(n).eq("id", n.id)
       : await supabase.from("notifications").insert(n);
 
-    setMsg(res.error ? res.error.message : "Notice saved.");
-
-    if (!res.error) {
+    if (res.error) {
+      setMsg("Notice save failed: " + res.error.message);
+    } else {
+      setMsg("Notice saved.");
       setN(emptyN);
       await load();
     }
@@ -323,63 +320,13 @@ export default function Admin() {
     setBusy(false);
   }
 
-  // MOCK TEST BUILDER
-
-  async function editMockTest(test: any) {
-    if (!supabase) return;
-
-    setBusy(true);
-    setMsg("");
-
-    const { data, error } = await supabase
-      .from("mock_test_questions")
-      .select("question_id, question_order")
-      .eq("mock_test_id", test.id)
-      .order("question_order");
-
-    if (error) {
-      setMsg("Could not load test questions: " + error.message);
-      setBusy(false);
-      return;
-    }
-
-    setM({
-      id: test.id,
-      title: test.title,
-      description: test.description || "",
-      subject: test.subject || "General",
-      duration_minutes: test.duration_minutes,
-      negative_marking: Number(test.negative_marking || 0),
-      published: test.published,
-    });
-
-    setSelectedQuestions(
-      (data || []).map((x: any) => x.question_id)
-    );
-
-    setMsg("Mock test loaded for editing.");
-    setBusy(false);
-
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function toggleQuestion(id: string) {
-    setSelectedQuestions((old) =>
-      old.includes(id)
-        ? old.filter((x) => x !== id)
-        : [...old, id]
-    );
-  }
-
   async function saveMockTest() {
-    if (!supabase) return;
-
-    if (!m.title.trim()) {
+    if (!supabase || !m.title.trim()) {
       setMsg("Mock test title is required.");
       return;
     }
 
-    if (selectedQuestions.length === 0) {
+    if (selectedQuestionIds.length === 0) {
       setMsg("Select at least one question.");
       return;
     }
@@ -399,8 +346,8 @@ export default function Admin() {
 
     const payload = {
       title: m.title.trim(),
-      description: m.description.trim(),
-      subject: m.subject.trim() || "General",
+      description: m.description,
+      subject: m.subject,
       duration_minutes: Number(m.duration_minutes),
       negative_marking: Number(m.negative_marking),
       published: m.published,
@@ -435,19 +382,18 @@ export default function Admin() {
       testId = data.id;
     }
 
-    // Replace existing question assignments.
     const { error: deleteError } = await supabase
       .from("mock_test_questions")
       .delete()
       .eq("mock_test_id", testId);
 
     if (deleteError) {
-      setMsg("Could not update question assignments: " + deleteError.message);
+      setMsg("Could not update test questions: " + deleteError.message);
       setBusy(false);
       return;
     }
 
-    const assignments = selectedQuestions.map((questionId, index) => ({
+    const mappings = selectedQuestionIds.map((questionId, index) => ({
       mock_test_id: testId,
       question_id: questionId,
       question_order: index + 1,
@@ -455,46 +401,52 @@ export default function Admin() {
 
     const { error: insertError } = await supabase
       .from("mock_test_questions")
-      .insert(assignments);
+      .insert(mappings);
 
     if (insertError) {
-      setMsg("Questions assignment failed: " + insertError.message);
+      setMsg("Question assignment failed: " + insertError.message);
       setBusy(false);
       return;
     }
 
     setMsg("Mock test saved successfully.");
     setM(emptyM);
-    setSelectedQuestions([]);
+    setSelectedQuestionIds([]);
     await load();
     setBusy(false);
   }
 
-  async function removeMockTest(id: string) {
-    if (!supabase || !confirm("Delete this mock test permanently?")) return;
+  async function editMockTest(test: any) {
+    if (!supabase) return;
 
-    setBusy(true);
+    setM({
+      id: test.id,
+      title: test.title,
+      description: test.description || "",
+      subject: test.subject || "Punjab GK",
+      duration_minutes: test.duration_minutes,
+      negative_marking: Number(test.negative_marking),
+      published: test.published,
+    });
 
-    const { error } = await supabase
-      .from("mock_tests")
-      .delete()
-      .eq("id", id);
+    const { data, error } = await supabase
+      .from("mock_test_questions")
+      .select("question_id,question_order")
+      .eq("mock_test_id", test.id)
+      .order("question_order", { ascending: true });
 
-    setMsg(error ? error.message : "Mock test deleted.");
-
-    if (!error) {
-      if (m.id === id) {
-        setM(emptyM);
-        setSelectedQuestions([]);
-      }
-      await load();
+    if (error) {
+      setMsg("Could not load test questions: " + error.message);
+      return;
     }
 
-    setBusy(false);
+    setSelectedQuestionIds((data || []).map((x: any) => x.question_id));
+    setTab("mocktests");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function remove(
-    table: "questions" | "resources" | "notifications",
+    table: "questions" | "resources" | "notifications" | "mock_tests",
     id: string
   ) {
     if (!supabase || !confirm("Delete this item permanently?")) return;
@@ -537,9 +489,10 @@ export default function Admin() {
     if (!supabase) return;
 
     supabase.auth.getSession().then(async ({ data }) => {
-      if (!data.session) return;
+      if (!data.session || !supabase) return;
 
-      const { data: profile } = await supabase.from("profiles")
+      const { data: profile } = await supabase
+        .from("profiles")
         .select("role")
         .eq("id", data.session.user.id)
         .maybeSingle();
@@ -556,7 +509,7 @@ export default function Admin() {
     value: string,
     onChange: (v: string) => void
   ) => (
-    <label style={{ display: "block", margin: "10px 0" }}>
+    <label style={{ display: "block", margin: "12px 0" }}>
       {label}
       <input
         value={value}
@@ -566,6 +519,14 @@ export default function Admin() {
     </label>
   );
 
+  const toggleQuestion = (id: string) => {
+    setSelectedQuestionIds((old) =>
+      old.includes(id)
+        ? old.filter((x) => x !== id)
+        : [...old, id]
+    );
+  };
+
   return (
     <main className="wrap" style={{ padding: "35px 22px 60px" }}>
       <Link href="/">← Home</Link>
@@ -574,18 +535,21 @@ export default function Admin() {
       {!session ? (
         <div className="card" style={{ maxWidth: 520 }}>
           <h3>Administrator sign-in</h3>
+
           <input
             type="email"
             placeholder="Admin email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+
           <input
             type="password"
             placeholder="Password"
             value={pass}
             onChange={(e) => setPass(e.target.value)}
           />
+
           <button className="btn" disabled={busy} onClick={login}>
             {busy ? "Verifying..." : "Sign in"}
           </button>
@@ -606,13 +570,13 @@ export default function Admin() {
             </button>
 
             <button className="btn secondary" onClick={() => setTab("mocktests")}>
-              Mock Tests ({mockTests.length})
+              Mock Test Builder ({mockTests.length})
             </button>
 
             <button className="btn" onClick={logout}>Logout</button>
           </div>
 
-          {/* MCQs */}
+          {/* MCQ MANAGEMENT */}
           {tab === "questions" && (
             <div className="card">
               <h2>{q.id ? "Edit MCQ" : "Add MCQ"}</h2>
@@ -672,7 +636,7 @@ export default function Admin() {
             </div>
           )}
 
-          {/* RESOURCES */}
+          {/* RESOURCE MANAGEMENT */}
           {tab === "resources" && (
             <div className="card">
               <h2>{r.id ? "Edit Resource" : "Add Study Resource"}</h2>
@@ -689,6 +653,7 @@ export default function Admin() {
               {field("Description", r.description, (v) => setR({ ...r, description: v }))}
 
               <h3>Upload PDF from computer</h3>
+
               <input type="file" accept="application/pdf,.pdf"
                 onChange={(e) => setPdf(e.target.files?.[0] || null)} />
 
@@ -746,84 +711,59 @@ export default function Admin() {
               <div className="card">
                 <h2>{m.id ? "Edit Mock Test" : "Create Mock Test"}</h2>
 
-                {field("Mock Test Title", m.title,
-                  (v) => setM({ ...m, title: v }))}
-
-                {field("Description", m.description,
-                  (v) => setM({ ...m, description: v }))}
-
-                {field("Subject", m.subject,
-                  (v) => setM({ ...m, subject: v }))}
+                {field("Test title", m.title, (v) => setM({ ...m, title: v }))}
+                {field("Subject", m.subject, (v) => setM({ ...m, subject: v }))}
+                {field("Description", m.description, (v) => setM({ ...m, description: v }))}
 
                 <label style={{ display: "block", margin: "12px 0" }}>
                   Duration (minutes)
-                  <input type="number" min="1" max="300"
+                  <input type="number" min={1} max={300}
                     value={m.duration_minutes}
-                    onChange={(e) => setM({
-                      ...m, duration_minutes: Number(e.target.value),
-                    })}
+                    onChange={(e) => setM({ ...m, duration_minutes: Number(e.target.value) })}
                     style={{ display: "block", width: "100%" }} />
                 </label>
 
                 <label style={{ display: "block", margin: "12px 0" }}>
                   Negative marking per wrong answer
-                  <select value={m.negative_marking}
-                    onChange={(e) => setM({
-                      ...m, negative_marking: Number(e.target.value),
-                    })}>
-                    <option value={0}>No negative marking</option>
-                    <option value={0.25}>-0.25 marks</option>
-                    <option value={0.33}>-0.33 marks</option>
-                    <option value={0.5}>-0.50 marks</option>
-                    <option value={1}>-1 mark</option>
-                  </select>
+                  <input type="number" min={0} max={1} step={0.25}
+                    value={m.negative_marking}
+                    onChange={(e) => setM({ ...m, negative_marking: Number(e.target.value) })}
+                    style={{ display: "block", width: "100%" }} />
                 </label>
 
-                <label style={{ display: "block", margin: "12px 0" }}>
+                <label>
                   <input type="checkbox" checked={m.published}
                     onChange={(e) => setM({ ...m, published: e.target.checked })} />
-                  Publish mock test
+                  Publish test (visible to students)
                 </label>
 
-                <hr />
-
-                <h3>Select Questions</h3>
-                <p>
-                  Selected: <strong>{selectedQuestions.length}</strong>
+                <h3>Select published questions ({selectedQuestionIds.length})</h3>
+                <p className="meta">
+                  Questions are assigned in the order you select them.
                 </p>
 
-                {questions.filter((x) => x.published).length === 0 ? (
-                  <p>No published questions available. Publish MCQs first.</p>
-                ) : (
-                  <div style={{ maxHeight: 500, overflowY: "auto" }}>
-                    {questions.filter((x) => x.published).map((x) => (
-                      <label key={x.id}
-                        style={{
-                          display: "flex",
-                          gap: 10,
-                          alignItems: "flex-start",
-                          padding: 12,
-                          marginBottom: 8,
-                          border: "1px solid #ddd",
-                          borderRadius: 8,
-                          cursor: "pointer",
-                        }}>
-                        <input type="checkbox"
-                          checked={selectedQuestions.includes(x.id)}
-                          onChange={() => toggleQuestion(x.id)}
-                          style={{ marginTop: 5 }} />
+                <div style={{ maxHeight: 450, overflowY: "auto", border: "1px solid #ddd", borderRadius: 10, padding: 10 }}>
+                  {questions.filter((x) => x.published).map((question) => (
+                    <label key={question.id} style={{
+                      display: "flex",
+                      gap: 10,
+                      padding: 12,
+                      borderBottom: "1px solid #eee",
+                      cursor: "pointer",
+                    }}>
+                      <input type="checkbox"
+                        checked={selectedQuestionIds.includes(question.id)}
+                        onChange={() => toggleQuestion(question.id)} />
+                      <span>
+                        <strong>{question.subject}</strong> — {question.question}
+                      </span>
+                    </label>
+                  ))}
 
-                        <span>
-                          <strong>{x.subject}</strong>
-                          <br />
-                          {x.question}
-                          <br />
-                          <small>{x.exam} · {x.difficulty}</small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+                  {questions.filter((x) => x.published).length === 0 && (
+                    <p>No published MCQs available. Publish questions in the MCQ tab first.</p>
+                  )}
+                </div>
 
                 <button className="btn" disabled={busy} onClick={saveMockTest}>
                   {busy ? "Saving..." : "Save Mock Test"}
@@ -831,36 +771,27 @@ export default function Admin() {
 
                 <button className="btn secondary" onClick={() => {
                   setM(emptyM);
-                  setSelectedQuestions([]);
+                  setSelectedQuestionIds([]);
                 }}>
-                  Clear Form
+                  Clear / New Test
                 </button>
               </div>
 
-              <h2>Existing Mock Tests</h2>
+              <h2>Existing Mock Tests ({mockTests.length})</h2>
 
-              {mockTests.length === 0 && (
-                <p>No mock tests created yet.</p>
-              )}
+              {mockTests.map((test) => (
+                <article className="card" key={test.id}>
+                  <h3>{test.title}</h3>
+                  <p>{test.subject} · {test.duration_minutes} minutes</p>
+                  <p>Negative marking: {test.negative_marking}</p>
+                  <p>{test.published ? "Published" : "Draft"}</p>
 
-              {mockTests.map((x) => (
-                <article className="card" key={x.id}>
-                  <h3>{x.title}</h3>
-                  <p>{x.subject} · {x.duration_minutes} minutes</p>
-                  <p>
-                    Negative marking: -{x.negative_marking}
-                  </p>
-                  <p>
-                    {x.published ? "Published" : "Draft"}
-                  </p>
-
-                  <button className="btn secondary"
-                    disabled={busy} onClick={() => editMockTest(x)}>
+                  <button className="btn secondary" onClick={() => editMockTest(test)}>
                     Edit
                   </button>
 
-                  <button className="btn secondary"
-                    disabled={busy} onClick={() => removeMockTest(x.id)}>
+                  <button className="btn secondary" disabled={busy}
+                    onClick={() => remove("mock_tests", test.id)}>
                     Delete
                   </button>
                 </article>
@@ -876,8 +807,9 @@ export default function Admin() {
                 <article className="card" key={x.id}>
                   <b>{x.subject} · {x.question}</b>
                   <p>{x.published ? "Published" : "Draft"}</p>
-                  <button onClick={() => setQ(x)}>Edit</button>
-                  <button disabled={busy} onClick={() => remove("questions", x.id)}>Delete</button>
+                  <button className="btn secondary" onClick={() => setQ(x)}>Edit</button>
+                  <button className="btn secondary" disabled={busy}
+                    onClick={() => remove("questions", x.id)}>Delete</button>
                 </article>
               ))}
             </>
@@ -891,8 +823,9 @@ export default function Admin() {
                   <b>{x.type} · {x.title}</b>
                   <p>{x.published ? "Published" : "Draft"}</p>
                   <p>{x.storage_path ? "Uploaded PDF" : x.file_url || "No file"}</p>
-                  <button onClick={() => { setR(x); setPdf(null); }}>Edit</button>
-                  <button disabled={busy} onClick={() => remove("resources", x.id)}>Delete</button>
+                  <button className="btn secondary" onClick={() => { setR(x); setPdf(null); }}>Edit</button>
+                  <button className="btn secondary" disabled={busy}
+                    onClick={() => remove("resources", x.id)}>Delete</button>
                 </article>
               ))}
             </>
@@ -905,8 +838,9 @@ export default function Admin() {
                 <article className="card" key={x.id}>
                   <b>{x.title}</b>
                   <p>{x.published ? "Published" : "Draft"}</p>
-                  <button onClick={() => setN(x)}>Edit</button>
-                  <button disabled={busy} onClick={() => remove("notifications", x.id)}>Delete</button>
+                  <button className="btn secondary" onClick={() => setN(x)}>Edit</button>
+                  <button className="btn secondary" disabled={busy}
+                    onClick={() => remove("notifications", x.id)}>Delete</button>
                 </article>
               ))}
             </>
@@ -917,7 +851,7 @@ export default function Admin() {
       {msg && <p role="status" aria-live="polite">{msg}</p>}
 
       <p className="meta">
-        Administrator actions are protected by Supabase RLS.
+        Administrator actions are protected by Supabase authentication and RLS.
       </p>
     </main>
   );
