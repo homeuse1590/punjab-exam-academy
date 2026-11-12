@@ -1,26 +1,509 @@
- "use client";
-import {useMemo,useState} from "react";
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-type Q={subject:string;question:string;options:string[];answer:number;explanation:string};
-const bank:Q[]=[
-{subject:"Punjab GK",question:"Which city is the capital of Punjab (India)?",options:["Amritsar","Chandigarh","Ludhiana","Patiala"],answer:1,explanation:"Chandigarh is the capital of Punjab and Haryana and a Union Territory."},
-{subject:"Punjab GK",question:"The Golden Temple is located in which city?",options:["Jalandhar","Patiala","Amritsar","Bathinda"],answer:2,explanation:"Sri Harmandir Sahib is located in Amritsar."},
-{subject:"Punjab GK",question:"Which river flows through the Majha region?",options:["Ravi","Yamuna","Narmada","Godavari"],answer:0,explanation:"The Ravi is one of the rivers associated with Punjab's Majha region."},
-{subject:"Computer",question:"Which shortcut copies selected text?",options:["Ctrl+X","Ctrl+C","Ctrl+V","Ctrl+Z"],answer:1,explanation:"Ctrl+C copies selected content."},
-{subject:"Computer",question:"Which is an input device?",options:["Monitor","Printer","Keyboard","Speaker"],answer:2,explanation:"A keyboard sends input to a computer."},
-{subject:"Computer",question:"CPU stands for:",options:["Central Processing Unit","Computer Personal Unit","Central Program Utility","Control Processing User"],answer:0,explanation:"CPU means Central Processing Unit."},
-{subject:"Reasoning",question:"Find the next number: 2, 4, 8, 16, __",options:["18","24","32","36"],answer:2,explanation:"Each term doubles; 16 × 2 = 32."},
-{subject:"Reasoning",question:"If CAT is coded as DBU, DOG is coded as:",options:["EPH","CNG","FQI","EOG"],answer:0,explanation:"Each letter moves one step forward: D→E, O→P, G→H."},
-{subject:"English",question:"Choose the synonym of 'Rapid'.",options:["Slow","Quick","Weak","Late"],answer:1,explanation:"Rapid means quick or fast."},
-{subject:"Punjabi",question:"'ਪਾਣੀ' ਦਾ ਸਮਾਨਾਰਥਕ ਸ਼ਬਦ ਕਿਹੜਾ ਹੈ?",options:["ਜਲ","ਅੱਗ","ਹਵਾ","ਧਰਤੀ"],answer:0,explanation:"ਜਲ ਪਾਣੀ ਦਾ ਸਮਾਨਾਰਥਕ ਸ਼ਬਦ ਹੈ।"},
-{subject:"Indian GK",question:"The Constitution of India came into effect on:",options:["15 Aug 1947","26 Jan 1950","26 Nov 1949","2 Oct 1950"],answer:1,explanation:"It came into effect on 26 January 1950."},
-{subject:"Maths",question:"What is 15% of 200?",options:["20","25","30","35"],answer:2,explanation:"0.15 × 200 = 30."}
-];
-export default function Quiz(){const [subject,setSubject]=useState("All"),[index,setIndex]=useState(0),[answers,setAnswers]=useState<Record<number,number>>({}),[submitted,setSubmitted]=useState(false);
-const filtered=useMemo(()=>subject==="All"?bank:bank.filter(q=>q.subject===subject),[subject]);const q=filtered[index];const score=filtered.reduce((s,x,i)=>s+(answers[i]===x.answer?1:0),0);
-function reset(s=subject){setSubject(s);setIndex(0);setAnswers({});setSubmitted(false)}
-return <main className="wrap" style={{padding:"32px 22px 60px"}}><Link href="/">← Home</Link><h1>MCQ Quiz / ਬਹੁ-ਵਿਕਲਪੀ ਪ੍ਰਸ਼ਨ</h1><p>Practice by subject, submit answers, and review explanations.</p>
-<div className="tools"><select value={subject} onChange={e=>reset(e.target.value)}><option>All</option>{Array.from(new Set(bank.map(x=>x.subject))).map(s=><option key={s}>{s}</option>)}</select><span className="meta">{filtered.length} practice questions</span></div>
-{submitted?<div className="card"><h2>Result: {score}/{filtered.length}</h2><p>Score: {Math.round(score/filtered.length*100)}%</p>{filtered.map((x,i)=><article key={i} style={{borderTop:"1px solid #e4eaf2",padding:"14px 0"}}><b>{i+1}. {x.question}</b><p>Your answer: {x.options[answers[i]]??"Not attempted"} · Correct: {x.options[x.answer]}</p><p className="meta">{x.explanation}</p></article>)}<button className="btn" onClick={()=>reset()}>Practice again</button></div>
-: q?<div className="qbox"><div className="sectionHead"><b>Question {index+1} / {filtered.length}</b><span className="pill">{q.subject}</span></div><h2>{q.question}</h2>{q.options.map((o,i)=><button key={i} className="option" style={{borderColor:answers[index]===i?"#2457a7":undefined,background:answers[index]===i?"#edf4ff":undefined}} onClick={()=>setAnswers(a=>({...a,[index]:i}))}>{String.fromCharCode(65+i)}. {o}</button>)}<div className="tools"><button className="btn secondary" disabled={index===0} onClick={()=>setIndex(i=>i-1)}>Previous</button><button className="btn" onClick={()=>index===filtered.length-1?setSubmitted(true):setIndex(i=>i+1)}>{index===filtered.length-1?"Submit Quiz":"Next →"}</button></div></div>:<p>No questions for this subject.</p>}
-</main>}
+import { supabase } from "@/lib/supabase";
+
+type Question = {
+  id: string;
+  subject: string;
+  exam: string | null;
+  question: string;
+  options: string[];
+  answer: number;
+  explanation: string;
+  language: string;
+  difficulty: string;
+};
+
+export default function Quiz() {
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [subject, setSubject] = useState("All");
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<number, number>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [savingAttempt, setSavingAttempt] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  // Load published questions
+  useEffect(() => {
+    let active = true;
+
+    async function loadQuestions() {
+      if (!supabase) {
+        setError("Supabase is not configured.");
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("questions")
+        .select("*")
+        .eq("published", true)
+        .order("created_at", { ascending: false });
+
+      if (!active) return;
+
+      if (error) {
+        setError(error.message);
+      } else {
+        const valid = (data || []).filter(
+          (q) =>
+            Array.isArray(q.options) &&
+            q.options.length >= 2 &&
+            Number.isInteger(q.answer) &&
+            q.answer >= 0 &&
+            q.answer < q.options.length
+        );
+
+        setQuestions(valid as Question[]);
+      }
+
+      setLoading(false);
+    }
+
+    loadQuestions();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const subjects = useMemo(
+    () => Array.from(new Set(questions.map((q) => q.subject))).sort(),
+    [questions]
+  );
+
+  const filtered =
+    subject === "All"
+      ? questions
+      : questions.filter((q) => q.subject === subject);
+
+  const q = filtered[index];
+
+  const answeredCount = Object.keys(answers).length;
+
+  const score = filtered.reduce(
+    (total, question, i) =>
+      total + (answers[i] === question.answer ? 1 : 0),
+    0
+  );
+
+  const percentage = filtered.length
+    ? Math.round((score / filtered.length) * 100)
+    : 0;
+
+  // Reset quiz
+  function reset() {
+    setIndex(0);
+    setAnswers({});
+    setSubmitted(false);
+    setSavingAttempt(false);
+    setSaveMessage("");
+  }
+
+  // Change subject
+  function changeSubject(value: string) {
+    setSubject(value);
+    reset();
+  }
+
+  // Submit quiz and save attempt in Supabase
+  async function submitQuiz() {
+    if (savingAttempt || submitted || filtered.length === 0) return;
+
+    setSavingAttempt(true);
+    setSaveMessage("");
+
+    try {
+      if (!supabase) {
+        setSaveMessage("Quiz completed. Supabase is not configured.");
+        setSubmitted(true);
+        return;
+      }
+
+      const { data: userData, error: userError } =
+        await supabase.auth.getUser();
+
+      if (userError) throw userError;
+
+      const user = userData.user;
+
+      // Save only if student is logged in
+      if (user) {
+        const { error: insertError } = await supabase
+          .from("attempts")
+          .insert({
+            user_id: user.id,
+            test_name: `MCQ Practice - ${subject}`,
+            score: score,
+            total: filtered.length,
+            answers: answers,
+          });
+
+        if (insertError) throw insertError;
+
+        setSaveMessage("Attempt saved successfully.");
+      } else {
+        setSaveMessage(
+          "Quiz completed. Login to save your attempts."
+        );
+      }
+
+      setSubmitted(true);
+    } catch (err) {
+      console.error("Attempt saving failed:", err);
+
+      setSaveMessage(
+        "Quiz completed, but attempt could not be saved. Please check your login or try again later."
+      );
+
+      setSubmitted(true);
+    } finally {
+      setSavingAttempt(false);
+    }
+  }
+
+  return (
+    <main
+      className="wrap"
+      style={{ padding: "32px 22px 60px", maxWidth: 1000 }}
+    >
+      <Link href="/">← Home</Link>
+
+      <header style={{ margin: "24px 0" }}>
+        <p style={{ color: "#64748b", fontWeight: 700 }}>
+          PUNJAB EXAM ACADEMY · PRACTICE
+        </p>
+
+        <h1>MCQ Practice / ਬਹੁ-ਵਿਕਲਪੀ ਪ੍ਰਸ਼ਨ</h1>
+
+        <p>Practice published questions and review your answers.</p>
+      </header>
+
+      {loading && (
+        <div className="card">Loading published questions...</div>
+      )}
+
+      {error && (
+        <div className="card">
+          <h3>Unable to load questions</h3>
+          <p>{error}</p>
+
+          <button
+            className="btn"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          <div
+            className="card"
+            style={{ padding: 18, marginBottom: 20 }}
+          >
+            <label>
+              <strong>Subject </strong>
+
+              <select
+                value={subject}
+                onChange={(e) => changeSubject(e.target.value)}
+              >
+                <option value="All">All Subjects</option>
+
+                {subjects.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <p>{filtered.length} published questions</p>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="card">
+              <h2>No published MCQs yet</h2>
+              <p>
+                Questions published by the administrator will appear here.
+              </p>
+            </div>
+          ) : submitted ? (
+            <section className="card" style={{ padding: 24 }}>
+              <div style={{ textAlign: "center" }}>
+                <p>QUIZ COMPLETED</p>
+
+                <h2 style={{ fontSize: 34 }}>
+                  {score}/{filtered.length}
+                </h2>
+
+                <h3>{percentage}% Score</h3>
+
+                <p>{answeredCount} questions attempted</p>
+
+                {saveMessage && (
+                  <p
+                    style={{
+                      fontWeight: 600,
+                      color: saveMessage.includes("successfully")
+                        ? "#15803d"
+                        : "#2563eb",
+                    }}
+                  >
+                    {saveMessage}
+                  </p>
+                )}
+
+                <button className="btn" onClick={reset}>
+                  Practice Again
+                </button>
+              </div>
+
+              {filtered.map((item, i) => {
+                const chosen = answers[i];
+                const correct = chosen === item.answer;
+
+                return (
+                  <article
+                    key={item.id}
+                    style={{
+                      borderTop: "1px solid #e2e8f0",
+                      padding: "18px 0",
+                    }}
+                  >
+                    <strong>
+                      {i + 1}. {item.question}
+                    </strong>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 8,
+                        marginTop: 12,
+                      }}
+                    >
+                      {item.options.map((option, j) => {
+                        const isCorrect = j === item.answer;
+                        const isChosen = j === chosen;
+
+                        return (
+                          <div
+                            key={j}
+                            style={{
+                              padding: 12,
+                              borderRadius: 10,
+                              border: `1px solid ${
+                                isCorrect
+                                  ? "#86efac"
+                                  : isChosen
+                                  ? "#fca5a5"
+                                  : "#e2e8f0"
+                              }`,
+                              background: isCorrect
+                                ? "#f0fdf4"
+                                : isChosen
+                                ? "#fef2f2"
+                                : "#fff",
+                            }}
+                          >
+                            <strong>
+                              {String.fromCharCode(65 + j)}.
+                            </strong>{" "}
+                            {option}
+
+                            {isCorrect && (
+                              <span style={{ color: "#15803d" }}>
+                                {" "}✓ Correct
+                              </span>
+                            )}
+
+                            {isChosen && !isCorrect && (
+                              <span style={{ color: "#b91c1c" }}>
+                                {" "}✗ Your answer
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <p
+                      style={{
+                        color: correct ? "#15803d" : "#b91c1c",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {chosen === undefined
+                        ? "Not attempted"
+                        : correct
+                        ? "Correct answer"
+                        : "Incorrect answer"}
+                    </p>
+
+                    {item.explanation && (
+                      <div
+                        style={{
+                          padding: 12,
+                          background: "#f8fafc",
+                          borderRadius: 10,
+                        }}
+                      >
+                        <strong>Explanation: </strong>
+                        {item.explanation}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </section>
+          ) : q ? (
+            <section className="card" style={{ padding: 24 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                }}
+              >
+                <strong>
+                  QUESTION {index + 1} OF {filtered.length}
+                </strong>
+
+                <span className="pill">{q.subject}</span>
+              </div>
+
+              <div
+                style={{
+                  height: 8,
+                  background: "#e2e8f0",
+                  borderRadius: 99,
+                  margin: "18px 0",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${((index + 1) / filtered.length) * 100}%`,
+                    background: "#2563eb",
+                    borderRadius: 99,
+                  }}
+                />
+              </div>
+
+              <h2 style={{ lineHeight: 1.5 }}>{q.question}</h2>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {q.options.map((option, i) => {
+                  const selected = answers[index] === i;
+
+                  return (
+                    <button
+                      type="button"
+                      key={i}
+                      aria-pressed={selected}
+                      onClick={() =>
+                        setAnswers((a) => ({ ...a, [index]: i }))
+                      }
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 14,
+                        width: "100%",
+                        textAlign: "left",
+                        padding: 15,
+                        borderRadius: 12,
+                        border: `2px solid ${
+                          selected ? "#2563eb" : "#e2e8f0"
+                        }`,
+                        background: selected ? "#eff6ff" : "#fff",
+                        color: "#0f172a",
+                        cursor: "pointer",
+                        fontSize: 16,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 32,
+                          height: 32,
+                          display: "grid",
+                          placeItems: "center",
+                          borderRadius: 8,
+                          fontWeight: 800,
+                          background: selected ? "#2563eb" : "#f1f5f9",
+                          color: selected ? "#fff" : "#475569",
+                        }}
+                      >
+                        {String.fromCharCode(65 + i)}
+                      </span>
+
+                      {option}
+
+                      {selected && (
+                        <span style={{ marginLeft: "auto" }}>✓</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                  marginTop: 24,
+                }}
+              >
+                <button
+                  className="btn secondary"
+                  disabled={index === 0 || savingAttempt}
+                  onClick={() => setIndex((i) => i - 1)}
+                >
+                  ← Previous
+                </button>
+
+                <span>
+                  {answeredCount}/{filtered.length} answered
+                </span>
+
+                {index < filtered.length - 1 ? (
+                  <button
+                    className="btn"
+                    disabled={savingAttempt}
+                    onClick={() => setIndex((i) => i + 1)}
+                  >
+                    Next Question →
+                  </button>
+                ) : (
+                  <button
+                    className="btn"
+                    onClick={submitQuiz}
+                    disabled={savingAttempt}
+                  >
+                    {savingAttempt ? "Saving..." : "Submit Quiz"}
+                  </button>
+                )}
+              </div>
+
+              {index === filtered.length - 1 &&
+                answeredCount < filtered.length && (
+                  <p style={{ color: "#b45309", marginTop: 12 }}>
+                    Some questions are unanswered. You can still submit.
+                  </p>
+                )}
+            </section>
+          ) : null}
+        </>
+      )}
+    </main>
+  );
+}

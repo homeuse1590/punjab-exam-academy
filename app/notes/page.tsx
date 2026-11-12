@@ -1,3 +1,145 @@
-import Link from "next/link";import {supabase} from "../../lib/supabase";
-export default async function Notes(){let rows:any[]=[];if(supabase){const {data}=await supabase.from("resources").select("*").eq("type","note").eq("published",true).order("created_at",{ascending:false});rows=data||[]}
-return <main className="wrap" style={{padding:"35px 22px 60px"}}><Link href="/">← Home</Link><h1>Study Notes / ਅਧਿਐਨ ਨੋਟਸ</h1><p>Topic-wise revision resources. Upload verified notes using your content workflow.</p><div className="grid3">{rows.map(r=><article className="card" key={r.id}><h3>{r.title}</h3><p>{r.description}</p>{r.file_url&&<a className="btn" href={r.file_url} target="_blank">Open / Download</a>}</article>)}</div>{!rows.length&&<div className="card"><h3>Notes library is ready</h3><p>No published notes in the database yet. Configure Supabase and publish your first PDF or text note.</p></div>}</main>}
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { supabase } from "../../lib/supabase";
+
+type Resource = {
+  id: string;
+  title: string;
+  description: string | null;
+  file_url: string | null;
+  storage_path: string | null;
+  created_at: string;
+};
+
+export default function Notes() {
+  const [rows, setRows] = useState<Resource[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadNotes() {
+      if (!supabase) {
+        setError("Supabase is not configured.");
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("resources")
+        .select("id,title,description,file_url,storage_path,created_at")
+        .eq("type", "note")
+        .eq("published", true)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return;
+      }
+
+      setRows((data || []) as Resource[]);
+      setLoading(false);
+    }
+
+    loadNotes();
+  }, []);
+
+  function getPdfUrl(resource: Resource) {
+    if (resource.file_url?.trim()) {
+      return resource.file_url;
+    }
+
+    if (resource.storage_path && supabase) {
+      const { data } = supabase.storage
+        .from("study-resources")
+        .getPublicUrl(resource.storage_path);
+
+      return data.publicUrl;
+    }
+
+    return "";
+  }
+
+  return (
+    <main className="wrap" style={{ padding: "35px 22px 60px" }}>
+      <Link href="/">← Home</Link>
+
+      <p className="eyebrow" style={{ marginTop: 25 }}>
+        PUNJAB EXAM ACADEMY
+      </p>
+
+      <h1>Study Notes / ਅਧਿਐਨ ਨੋਟਸ</h1>
+
+      <p>
+        Topic-wise revision notes for Punjab competitive examinations.
+        ਪੰਜਾਬ ਮੁਕਾਬਲੇ ਦੀਆਂ ਪ੍ਰੀਖਿਆਵਾਂ ਲਈ ਅਧਿਐਨ ਨੋਟਸ।
+      </p>
+
+      <section className="card" style={{ marginTop: 25 }}>
+        <h2>Study Notes Library</h2>
+
+        {loading && <p>Loading published study notes...</p>}
+
+        {error && (
+          <div style={{ color: "red", marginTop: 15 }}>
+            <strong>Unable to load study notes.</strong>
+            <p>{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && rows.length === 0 && (
+          <div>
+            <p>No published study notes are available yet.</p>
+            <p>New revision notes will appear here after publication.</p>
+          </div>
+        )}
+
+        {!loading && !error && rows.length > 0 && (
+          <div className="grid3" style={{ marginTop: 20 }}>
+            {rows.map((resource) => {
+              const pdfUrl = getPdfUrl(resource);
+
+              return (
+                <article className="card" key={resource.id}>
+                  <h3>{resource.title}</h3>
+
+                  <p>{resource.description || "Study material"}</p>
+
+                  {pdfUrl ? (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <a
+                        className="btn"
+                        href={pdfUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Open PDF
+                      </a>
+
+                      <a
+                        className="btn secondary"
+                        href={pdfUrl}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  ) : (
+                    <p style={{ color: "#b45309" }}>
+                      PDF link is missing for this resource.
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}

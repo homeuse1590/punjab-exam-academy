@@ -1,24 +1,124 @@
+
 "use client";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
-const qs = [
-  ["Punjab's capital is:", ["Amritsar", "Chandigarh", "Patiala", "Ludhiana"], 1],
-  ["Golden Temple is in:", ["Amritsar", "Jalandhar", "Bathinda", "Moga"], 0],
-  ["CPU stands for:", ["Central Processing Unit", "Computer Power Unit", "Central Print Utility", "Control Program Unit"], 0],
-  ["15% of 200 equals:", ["20", "25", "30", "35"], 2],
-  ["Ctrl+C is used to:", ["Cut", "Copy", "Paste", "Undo"], 1],
-  ["Constitution came into effect on:", ["15 Aug 1947", "26 Jan 1950", "26 Nov 1949", "2 Oct 1950"], 1],
-  ["Next number: 3,6,12,24,__", ["30", "36", "48", "42"], 2],
-  ["Synonym of Rapid:", ["Slow", "Quick", "Late", "Weak"], 1],
-  ["'ਪਾਣੀ' ਦਾ ਸਮਾਨਾਰਥਕ:", ["ਜਲ", "ਅੱਗ", "ਹਵਾ", "ਮਿੱਟੀ"], 0],
-  ["Keyboard is a:", ["Output device", "Input device", "Storage", "Network"], 1],
-] as const;
-export default function MockTests() {
-  const [started, setStarted] = useState(false); const [sec, setSec] = useState(600); const [answers, setAnswers] = useState<Record<number, number>>({}); const [done, setDone] = useState(false);
-  useEffect(() => { if (!started || done) return; const t = setInterval(() => setSec(s => { if (s <= 1) { setDone(true); return 0; } return s - 1; }), 1000); return () => clearInterval(t); }, [started, done]);
-  const score = qs.reduce((n, q, i) => n + (answers[i] === q[2] ? 1 : 0), 0);
-  const time = `${Math.floor(sec / 60).toString().padStart(2, "0")}:${(sec % 60).toString().padStart(2, "0")}`;
-  return <main className="wrap" style={{ padding: "32px 22px 60px" }}><Link href="/">← Home</Link><h1>Mock Tests / ਮੌਕ ਟੈਸਟ</h1><p>10-question demo test · 10 minutes · 1 mark per question · no negative marking</p>
-    {!started ? <div className="card"><h2>Punjab Exam Academy Practice Test</h2><ul><li>10 mixed-subject questions</li><li>10-minute countdown</li><li>Answers saved while you attempt</li><li>Automatic submission when time ends</li></ul><button className="btn" onClick={() => setStarted(true)}>Start Test →</button></div> : done ? <div className="card"><h2>Test completed</h2><h3>Score: {score}/{qs.length} ({Math.round(score / qs.length * 100)}%)</h3>{qs.map((q, i) => <article key={i} style={{ padding: "12px 0", borderTop: "1px solid #e4eaf2" }}><b>{i + 1}. {q[0]}</b><p>Your answer: {q[1][answers[i]] ?? "Not attempted"} · Correct: {q[1][q[2]]}</p></article>)}<button className="btn" onClick={() => { setStarted(false); setDone(false); setSec(600); setAnswers({}); }}>Retake test</button></div> : <div className="qbox"><div className="sectionHead"><b>Mock Test</b><span className="pill">Time remaining: {time}</span></div>{qs.map((q, i) => <section key={i} style={{ padding: "16px 0", borderBottom: "1px solid #e4eaf2" }}><b>{i + 1}. {q[0]}</b>{q[1].map((o, j) => <label key={j} style={{ display: "block", padding: 7 }}><input type="radio" name={`q${i}`} checked={answers[i] === j} onChange={() => setAnswers(a => ({ ...a, [i]: j }))}/> {String.fromCharCode(65 + j)}. {o}</label>)}</section>)}<button className="btn" style={{ marginTop: 18 }} onClick={() => setDone(true)}>Submit Test</button></div>}
-  </main>;
+import { supabase } from "../../lib/supabase";
+
+type MockTest = {
+  id: string;
+  title: string;
+  description: string | null;
+  subject: string;
+  duration_minutes: number;
+  negative_marking: number;
+};
+
+export default function MockTestsPage() {
+  const [tests, setTests] = useState<MockTest[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadTests() {
+      if (!supabase) {
+        setError("Supabase is not configured.");
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("mock_tests")
+        .select("id,title,description,subject,duration_minutes,negative_marking")
+        .eq("published", true)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setError(error.message);
+        setLoading(false);
+        return;
+      }
+
+      const list = (data || []) as MockTest[];
+      setTests(list);
+
+      if (list.length > 0) {
+        const { data: mappings, error: mappingError } = await supabase
+          .from("mock_test_questions")
+          .select("mock_test_id")
+          .in("mock_test_id", list.map((x) => x.id));
+
+        if (mappingError) {
+          setError(mappingError.message);
+        } else {
+          const result: Record<string, number> = {};
+          (mappings || []).forEach((x: any) => {
+            result[x.mock_test_id] = (result[x.mock_test_id] || 0) + 1;
+          });
+          setCounts(result);
+        }
+      }
+
+      setLoading(false);
+    }
+
+    loadTests();
+  }, []);
+
+  return (
+    <main className="wrap" style={{ padding: "35px 22px 70px" }}>
+      <Link href="/">← Home</Link>
+
+      <h1 style={{ marginTop: 24 }}>Punjab Competitive Mock Tests</h1>
+      <p className="meta">
+        Punjab Exam Academy · Practice with timed examinations
+      </p>
+
+      {loading && <p>Loading published mock tests...</p>}
+
+      {error && (
+        <div className="card" style={{ color: "#b91c1c" }}>
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && tests.length === 0 && (
+        <div className="card">
+          <h2>No mock tests available yet</h2>
+          <p>New tests will appear here after the administrator publishes them.</p>
+        </div>
+      )}
+
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))",
+        gap: 20,
+        marginTop: 25
+      }}>
+        {tests.map((test) => (
+          <article className="card" key={test.id}>
+            <h2>{test.title}</h2>
+
+            <p>{test.description || "Practice test for Punjab competitive exams."}</p>
+
+            <p><strong>Subject:</strong> {test.subject}</p>
+            <p><strong>Questions:</strong> {counts[test.id] || 0}</p>
+            <p><strong>Duration:</strong> {test.duration_minutes} minutes</p>
+            <p><strong>Negative marking:</strong> -{Number(test.negative_marking)}</p>
+
+            {(counts[test.id] || 0) === 0 ? (
+              <button className="btn" disabled>
+                Questions not assigned
+              </button>
+            ) : (
+              <Link className="btn" href={`/mock-tests/${test.id}`}>
+                Start Test →
+              </Link>
+            )}
+          </article>
+        ))}
+      </div>
+    </main>
+  );
 }
